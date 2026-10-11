@@ -1,0 +1,47 @@
+name: ci
+
+# Builds the native library from source on every push (the pre-built copies in
+# lib/_native/ are produced by build-native and committed before a tag), checks
+# that it loads with a matching ABI, and runs the suite against a live server.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: "123"
+          POSTGRES_DB: teste
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres -d teste"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dart-lang/setup-dart@v1
+        with:
+          sdk: stable
+      - name: Install toolchain and libpq
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends cmake build-essential libpq-dev
+      - name: Build the native library
+        run: |
+          cmake -S native -B native/build -DCMAKE_BUILD_TYPE=Release
+          cmake --build native/build --parallel
+      - run: dart pub get
+      - run: dart analyze --fatal-infos
+      - name: Load and ABI check
+        run: DART_DB_CONNECTOR_NATIVE_LIB_PATH=$PWD/native/build/libnative_db.so dart run tool/check_native.dart
+      - name: Tests against a live server
+        # --concurrency=1: suites create and drop their own tables in one shared database.
+        run: DART_DB_CONNECTOR_NATIVE_LIB_PATH=$PWD/native/build/libnative_db.so dart test --concurrency=1

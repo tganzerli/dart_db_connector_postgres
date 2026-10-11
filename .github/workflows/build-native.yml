@@ -1,0 +1,101 @@
+name: build-native
+
+# Produces the pre-built native library that ships inside the package, so that
+# consumers on a supported platform need neither CMake nor a compiler. Four
+# platforms, one library each, landing in lib/_native/<platform>/, where the
+# resolver looks. The collected artifact is committed to the repository before
+# a version is tagged.
+#
+# Windows is absent by design: the native pool is built on POSIX threads.
+#
+# The library links DYNAMICALLY against libpq, so consumers install libpq where
+# their app runs.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: ${{ matrix.platform }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux-x64
+            runner: ubuntu-latest
+            ext: so
+          - platform: linux-arm64
+            runner: ubuntu-24.04-arm
+            ext: so
+          - platform: macos-arm64
+            runner: macos-latest
+            ext: dylib
+          - platform: macos-x64
+            runner: macos-15-intel
+            ext: dylib
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain and libpq (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends cmake build-essential libpq-dev
+
+      - name: Install toolchain and libpq (macOS)
+        if: runner.os == 'macOS'
+        run: brew install cmake libpq
+
+      - name: Build
+        run: |
+          cmake -S native -B native/build -DCMAKE_BUILD_TYPE=Release
+          cmake --build native/build --parallel
+
+      - name: Collect
+        run: |
+          set -euo pipefail
+          DEST="lib/_native/${{ matrix.platform }}"
+          mkdir -p "$DEST"
+          cp "native/build/libnative_db.${{ matrix.ext }}" "$DEST/"
+          if [ "${{ runner.os }}" = "macOS" ]; then otool -L "$DEST"/*; else ldd "$DEST"/*; fi
+
+      - uses: dart-lang/setup-dart@v1
+        with:
+          sdk: stable
+
+      - name: Load and ABI check from lib/_native
+        # No override: the resolver must find the copy in lib/_native by package URI,
+        # exactly as a consumer's `dart run` would.
+        run: |
+          dart pub get
+          dart run tool/check_native.dart
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-${{ matrix.platform }}
+          path: lib/_native/${{ matrix.platform }}/
+          if-no-files-found: error
+
+  collect:
+    name: collect all platforms
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: _native
+          pattern: native-*
+      - name: Flatten and verify
+        working-directory: _native
+        run: |
+          set -euo pipefail
+          for d in native-*; do mv "$d" "${d#native-}"; done
+          found=$(find . -type f \( -name '*.so' -o -name '*.dylib' \) | wc -l)
+          find . -type f | sort
+          [ "$found" -eq 4 ] || { echo "::error::expected 4 libraries, found $found"; exit 1; }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-all-platforms
+          path: _native/
+          if-no-files-found: error

@@ -1,0 +1,67 @@
+name: leak-scan
+
+# Guards the boundary of this repository.
+#
+# The connector was developed alongside private material that must never appear
+# here: internal document paths, the private repository name, and internal work
+# identifiers. Manual review does not scale for that, and a leak that reaches a
+# published package version cannot be withdrawn, only superseded. So it is a gate.
+#
+# This workflow excludes itself from the scan, since it necessarily spells out the
+# very terms it looks for.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history: commit messages are scanned too
+
+      - name: Scan tracked files
+        run: |
+          set -uo pipefail
+          PATTERN='tcc_wiki|USP_TCC|claude|anthropic'
+          if git grep -nIiE "$PATTERN" -- . ':!.github/workflows/leak-scan.yml'; then
+            echo "::error::forbidden reference found in a tracked file"
+            exit 1
+          fi
+          echo "tracked files clean"
+
+      - name: Scan internal identifiers
+        run: |
+          set -uo pipefail
+          # Internal work identifiers (YYYY-MM-DD_slug), phase markers (F4.A,
+          # F2.0.b) and block numbering are meaningless outside the private
+          # repository and must not leak into public documentation.
+          PATTERN='\bF[0-9]+\.[0-9A-Za-z]|[0-9]{4}-[0-9]{2}-[0-9]{2}_[a-z0-9-]+|\bbloco[ 0-9]'
+          if git grep -nIE "$PATTERN" -- . ':!.github/workflows/leak-scan.yml'; then
+            echo "::error::internal identifier found in a tracked file"
+            exit 1
+          fi
+          echo "no internal identifiers"
+
+      - name: Scan commit history
+        run: |
+          set -uo pipefail
+          PATTERN='tcc_wiki|USP_TCC|claude|anthropic'
+          if git log --format='%s%n%b%n%an%n%ae' | grep -nIiE "$PATTERN"; then
+            echo "::error::forbidden reference found in commit history"
+            exit 1
+          fi
+          echo "history clean"
+
+      - name: Scan for absolute local paths
+        run: |
+          set -uo pipefail
+          if git grep -nIE '/(Users|home)/[a-z]' -- . ':!.github/workflows/leak-scan.yml'; then
+            echo "::error::absolute local path found; use a relative path"
+            exit 1
+          fi
+          echo "no absolute local paths"
