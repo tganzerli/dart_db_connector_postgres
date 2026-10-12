@@ -12,7 +12,7 @@
 /// `withTransaction` in `02_transaction.dart`.
 ///
 /// Run (with Postgres up at localhost:5432, dbname=teste):
-///   cd dart && dart run example/03_pipeline_oltp.dart
+///   dart run example/03_pipeline_oltp.dart
 library;
 
 import 'package:dart_db_connector_postgres/dart_db_connector_postgres.dart';

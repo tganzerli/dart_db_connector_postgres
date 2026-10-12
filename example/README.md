@@ -17,19 +17,18 @@ order or jump to the pattern you need.
 | 2 | `02_transaction.dart` | `withTransaction` + `PostgresRepository`-based CRUD + rollback-on-exception. Uses the `produto` entity defined in `produto.dart`. |
 | 3 | `03_pipeline_oltp.dart` | Bulk INSERT via `withPipelinedTransaction` — N statements in a single network round-trip. **Experimental:** rows are discarded. |
 | 4 | `04_diagnostics.dart` | Per-transaction timings via `withTransactionInstrumented` + `TxDiagnostics`. Requires `PoolConfig.instrumentationEnabled = true`. **Experimental.** |
-| 5 | `05_tls.dart` | TLS with `verify-full` and a client certificate, built with `PostgresConnInfo` / `SslMode`. Runs against `docker/postgres-tls` (port 5434). |
+| 5 | `05_tls.dart` | TLS with `verify-full` and a client certificate, built with `PostgresConnInfo` / `SslMode`. Needs a PostgreSQL with TLS; see "Local PostgreSQL with TLS" in the package README. |
 
 ## Running
 
 ```bash
-cd dart
 dart pub get
 dart run example/main.dart
 dart run example/01_simple_query.dart
 dart run example/02_transaction.dart
 dart run example/03_pipeline_oltp.dart
 dart run example/04_diagnostics.dart
-dart run example/05_tls.dart ../../docker/postgres-tls/certs
+dart run example/05_tls.dart <certs-dir>
 ```
 
 Each example creates the tables it needs (`produto`, `evento`, `counter`) with `DROP TABLE IF EXISTS` first, so they are idempotent.

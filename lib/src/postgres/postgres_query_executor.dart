@@ -198,6 +198,9 @@ class PostgresQueryExecutor implements PostgresQueryExecutorContract {
     // Fast path: zero params + text result → Simple Query Protocol
     // (no marshalling, no PQexecParams overhead). Identical to the
     // pre-ABI-MINOR-1 behaviour for backward compatibility.
+    // A multi-statement [sql] runs here as one implicit transaction when
+    // no BEGIN is open; an error in any statement throws, and on success
+    // the first statement's result is the one returned.
     if (params.isEmpty && !binaryResult) {
       if (reset || _pendingBegin) {
         final begin = _pendingBegin;
@@ -519,6 +522,10 @@ class PostgresQueryExecutor implements PostgresQueryExecutorContract {
   /// empty [PostgresResultSet]; it now throws [QueryFailedException] carrying
   /// the real server message. The connection is drained clean before
   /// throwing so the next dispatch starts fresh.
+  ///
+  /// The trailing results are inspected too (2026-10-12): an error past
+  /// the first statement of a multi-statement string used to be cleared
+  /// unseen — see [_drainTrailing].
   PostgresResultSet _drainResults(String sql, {required bool binary}) {
     final result = _binding.pollResult(_conn);
     if (result == ffi.nullptr) {
@@ -532,8 +539,33 @@ class PostgresQueryExecutor implements PostgresQueryExecutorContract {
       throw QueryFailedException(sql, msg.isEmpty ? 'query failed' : msg);
     }
     final rs = PostgresResultSet.fromResult(_binding, result, binary: binary);
-    _drainRemaining();
+    final trailingError = _drainTrailing();
+    if (trailingError != null) {
+      rs.release();
+      throw QueryFailedException(sql, trailingError);
+    }
     return rs;
+  }
+
+  /// Drains the results after the head, as [_drainRemaining] does, and
+  /// returns the server message of the first error among them, or `null`.
+  /// A multi-statement string in the Simple protocol yields one result
+  /// per statement run and stops at the first failing one, so an error
+  /// past the first statement is the last result — previously cleared
+  /// unseen, leaving the caller with a success (outside a transaction,
+  /// the implicit one had been rolled back).
+  String? _drainTrailing() {
+    String? error;
+    while (true) {
+      final r = _binding.pollResult(_conn);
+      if (r == ffi.nullptr) break;
+      if (error == null && PgExecStatus.isError(_binding.getResultStatus(r))) {
+        final msg = _binding.getErrorMessage(r).toDartString();
+        error = msg.isEmpty ? 'query failed' : msg;
+      }
+      _binding.clearResult(r);
+    }
+    return error;
   }
 
   /// Clears every remaining `PGresult` on the conn so it is idle for

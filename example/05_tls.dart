@@ -11,17 +11,23 @@
 /// A failed handshake raises a [NativePoolStartupException] whose message is
 /// libpq's reason (e.g. "certificate verify failed").
 ///
-/// Run against the repository's TLS Postgres (docker/postgres-tls):
-///   ./docker/postgres-tls/gen-certs.sh
-///   (cd docker/postgres-tls && docker compose up -d --wait)
-///   dart run example/05_tls.dart ../../docker/postgres-tls/certs
+/// Run against a PostgreSQL with TLS (see "Local PostgreSQL with TLS" in the
+/// package README), passing the directory that holds `ca.crt`, `client.crt`
+/// and `client.key`. Host, port, database and credentials are set below
+/// (`localhost:5434`, `postgres`); edit them for your server.
+///   dart run example/05_tls.dart <certs-dir>
 library;
+
+import 'dart:io';
 
 import 'package:dart_db_connector_postgres/dart_db_connector_postgres.dart';
 
 Future<void> main(List<String> args) async {
-  final certs =
-      args.isNotEmpty ? args.first : '../../docker/postgres-tls/certs';
+  if (args.isEmpty) {
+    stderr.writeln('usage: dart run example/05_tls.dart <certs-dir>');
+    exit(64);
+  }
+  final certs = args.first;
   final pool = PostgresConnectionPool(PoolConfig(
     connInfo: PostgresConnInfo(
       host: 'localhost',

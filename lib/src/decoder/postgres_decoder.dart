@@ -41,7 +41,7 @@ const int _postgresEpochUnixMicros = 946684800 * 1000000;
 ///   - `int` for OIDs int2/int4/int8
 ///   - `double` for OIDs float4/float8
 ///   - [PostgresNumeric] for numeric — exact; `getDouble` converts
-///   - `String` for OIDs text/varchar/bpchar
+///   - `String` for OIDs text/varchar/bpchar/name/"char"
 ///   - `dynamic` (Map/List/etc) for json/jsonb (via [jsonDecode])
 ///   - `Uint8List` for bytea (decoded from `\x<hex>` text format) and
 ///     for unknown OIDs (returned as-is)
@@ -63,8 +63,13 @@ Object decodeByOid(Uint8List bytes, int oid) {
     PostgresOid.numeric => PostgresNumeric.fromText(_asciiString(bytes)),
     PostgresOid.text ||
     PostgresOid.varchar ||
-    PostgresOid.bpchar =>
+    PostgresOid.bpchar ||
+    PostgresOid.name =>
       utf8.decode(bytes),
+    // `"char"` text output is ASCII on PostgreSQL 15+: `charout` renders
+    // bytes with the high bit set as `\ooo`. Older servers send the raw
+    // byte, which comes back here as a Latin-1 character.
+    PostgresOid.char => _asciiString(bytes),
     PostgresOid.json ||
     PostgresOid.jsonb =>
       jsonDecode(utf8.decode(bytes)) as Object,
@@ -107,7 +112,8 @@ CellDecoder textDecoderForOid(int oid) => switch (oid) {
       PostgresOid.numeric => _decodeNumericTextPtr,
       PostgresOid.text ||
       PostgresOid.varchar ||
-      PostgresOid.bpchar =>
+      PostgresOid.bpchar ||
+      PostgresOid.name =>
         _decodeUtf8Ptr,
       // Cold OIDs (json/jsonb/bytea/timestamp/unknown): delegate to the
       // canonical text family — same semantics, resolved once per plan.
@@ -175,7 +181,7 @@ Object _decodeDoubleTextPtr(ffi.Pointer<ffi.Uint8> ptr, int len) =>
 Object _decodeNumericTextPtr(ffi.Pointer<ffi.Uint8> ptr, int len) =>
     PostgresNumeric.fromText(String.fromCharCodes(ptr.asTypedList(len)));
 
-/// Text-mode UTF-8 string (text/varchar/bpchar). The zero-copy view is
+/// Text-mode UTF-8 string (text/varchar/bpchar/name). The zero-copy view is
 /// the cheapest way to feed the UTF-8 decoder, which must allocate the
 /// resulting `String` regardless.
 Object _decodeUtf8Ptr(ffi.Pointer<ffi.Uint8> ptr, int len) =>
@@ -235,6 +241,8 @@ PostgresType decodedTypeForOid(int oid) => postgresTypeFromOid(oid);
 ///     2026-09-10. Both wire formats converge on the same exact value —
 ///     before that the binary path returned raw [Uint8List], so the two
 ///     formats disagreed on the Dart type for the same column.
+///   - `"char"` (OID 18): one raw byte, rendered the way `charout`
+///     renders it in text mode (see [_charFromByte]).
 ///   - Unknown OIDs: returned as raw [Uint8List] (zero-copy view).
 Object decodeByOidBinary(Uint8List bytes, int oid) {
   return switch (oid) {
@@ -246,8 +254,10 @@ Object decodeByOidBinary(Uint8List bytes, int oid) {
     PostgresOid.float8 => ByteData.sublistView(bytes).getFloat64(0, Endian.big),
     PostgresOid.text ||
     PostgresOid.varchar ||
-    PostgresOid.bpchar =>
+    PostgresOid.bpchar ||
+    PostgresOid.name =>
       utf8.decode(bytes),
+    PostgresOid.char => _charFromByte(bytes),
     PostgresOid.json => jsonDecode(utf8.decode(bytes)) as Object,
     PostgresOid.jsonb =>
       // 1-byte version prefix (always 0x01 today) followed by UTF-8 JSON.
@@ -265,6 +275,16 @@ Object decodeByOidBinary(Uint8List bytes, int oid) {
     PostgresOid.numeric => _binaryToNumeric(bytes),
     _ => bytes, // unknown OID → raw bytes
   };
+}
+
+/// Binary `"char"`: one raw byte (`charsend`). Rendered the way `charout`
+/// does in text mode, so both wire formats yield the same `String`: 0x00
+/// as `''`, ASCII as itself, a byte with the high bit set as `\ooo`.
+String _charFromByte(Uint8List bytes) {
+  if (bytes.isEmpty || bytes[0] == 0) return '';
+  final b = bytes[0];
+  if (b < 0x80) return String.fromCharCode(b);
+  return '\\${b.toRadixString(8).padLeft(3, '0')}';
 }
 
 /// Binary `uuid`: 16 raw bytes in RFC 4122 order, rendered as the

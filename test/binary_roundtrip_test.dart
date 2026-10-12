@@ -288,4 +288,38 @@ void main() {
       expect(v, isNull);
     });
   });
+
+  group('catalog types (name, "char") decode as String in both formats', () {
+    test('name', () async {
+      final (t, b) = await _bothFormats(pool, "'rls_prova'::name");
+      expect(t, 'rls_prova');
+      expect(b, 'rls_prova');
+    });
+
+    test('"char"', () async {
+      final (t, b) = await _bothFormats(pool, "'r'::\"char\"");
+      expect(t, 'r');
+      expect(b, 'r');
+    });
+
+    test('"char" with the high bit set agrees across formats', () async {
+      // charout renders it as `\ooo` (PostgreSQL 15+); the binary path
+      // must produce the same String from the raw byte. The int4 cast is
+      // signed, so 0xE9 is -23.
+      final (t, b) = await _bothFormats(pool, "(-23)::int4::\"char\"");
+      expect(t, r'\351');
+      expect(b, t);
+    });
+
+    test('pg_class.relname and relkind', () async {
+      final (t, b) = await _bothFormats(
+          pool, "(SELECT relname FROM pg_class WHERE relname = 'pg_class')");
+      expect(t, 'pg_class');
+      expect(b, 'pg_class');
+      final (kt, kb) = await _bothFormats(
+          pool, "(SELECT relkind FROM pg_class WHERE relname = 'pg_class')");
+      expect(kt, 'r');
+      expect(kb, 'r');
+    });
+  });
 }

@@ -11,6 +11,7 @@ import 'dart:typed_data';
 import 'package:dart_db_connector_postgres/src/decoder/postgres_decoder.dart';
 import 'package:dart_db_connector_postgres/src/decoder/postgres_numeric.dart';
 import 'package:dart_db_connector_postgres/src/decoder/postgres_oids.dart';
+import 'package:dart_db_connector_postgres/src/decoder/postgres_type.dart';
 import 'package:dart_db_connector_postgres/src/postgres/param.dart';
 import 'package:test/test.dart';
 
@@ -61,11 +62,45 @@ void main() {
 
   group('decodeByOidBinary — text family', () {
     test('text / varchar / bpchar decode as UTF-8', () {
-      for (final oid in [PostgresOid.text, PostgresOid.varchar, PostgresOid.bpchar]) {
+      for (final oid in [
+        PostgresOid.text,
+        PostgresOid.varchar,
+        PostgresOid.bpchar,
+        PostgresOid.name,
+      ]) {
         // 'café' in UTF-8
         final bytes = Uint8List.fromList([0x63, 0x61, 0x66, 0xC3, 0xA9]);
         expect(decodeByOidBinary(bytes, oid), 'café');
       }
+    });
+
+    test('"char" renders its byte the way charout does in text mode', () {
+      // `pg_class.relkind`-style ASCII code.
+      expect(
+          decodeByOidBinary(Uint8List.fromList([0x72]), PostgresOid.char), 'r');
+      // 0x00 is the empty string in text mode.
+      expect(
+          decodeByOidBinary(Uint8List.fromList([0x00]), PostgresOid.char), '');
+      // High bit set: `\ooo` on PostgreSQL 15+, never a UTF-8 decode error.
+      expect(decodeByOidBinary(Uint8List.fromList([0xE9]), PostgresOid.char),
+          r'\351');
+    });
+
+    test('name and "char" decode as String in text mode too', () {
+      expect(
+          decodeByOid(
+              Uint8List.fromList('pg_class'.codeUnits), PostgresOid.name),
+          'pg_class');
+      expect(decodeByOid(Uint8List.fromList('r'.codeUnits), PostgresOid.char),
+          'r');
+      expect(
+          decodeByOid(Uint8List.fromList(r'\351'.codeUnits), PostgresOid.char),
+          r'\351');
+    });
+
+    test('name and "char" report PostgresType.text', () {
+      expect(postgresTypeFromOid(PostgresOid.name), PostgresType.text);
+      expect(postgresTypeFromOid(PostgresOid.char), PostgresType.text);
     });
 
     test('json decodes via jsonDecode', () {

@@ -28,6 +28,13 @@ abstract final class PostgresOid {
   /// `bytea` (binary data; text uses `\x<hex>` prefix)
   static const int bytea = 17;
 
+  /// `"char"` (single byte; catalog category codes such as
+  /// `pg_class.relkind`). Not `char(N)`, which is [bpchar].
+  static const int char = 18;
+
+  /// `name` (catalog identifier, up to 63 bytes, e.g. `pg_class.relname`)
+  static const int name = 19;
+
   /// `int8` / `bigint`
   static const int int8 = 20;
 

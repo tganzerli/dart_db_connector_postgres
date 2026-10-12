@@ -14,7 +14,7 @@
 /// (`lockWaitUs`, `walFlushUs`, ...) before 1.0.
 ///
 /// Run (with Postgres up at localhost:5432, dbname=teste):
-///   cd dart && dart run example/04_diagnostics.dart
+///   dart run example/04_diagnostics.dart
 library;
 
 import 'package:dart_db_connector_postgres/dart_db_connector_postgres.dart';

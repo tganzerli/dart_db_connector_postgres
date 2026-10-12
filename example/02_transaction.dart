@@ -10,7 +10,7 @@
 /// Throws inside `body` are rolled back automatically and re-thrown.
 ///
 /// Run (with Postgres up at localhost:5432, dbname=teste):
-///   cd dart && dart run example/02_transaction.dart
+///   dart run example/02_transaction.dart
 library;
 
 import 'package:dart_db_connector_postgres/dart_db_connector_postgres.dart';

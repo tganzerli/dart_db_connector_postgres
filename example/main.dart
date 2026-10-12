@@ -6,7 +6,7 @@
 /// diagnostics).
 ///
 /// Run (with Postgres up at localhost:5432, dbname=teste):
-///   cd dart && dart run example/main.dart
+///   dart run example/main.dart
 library;
 
 import 'package:dart_db_connector_postgres/dart_db_connector_postgres.dart';

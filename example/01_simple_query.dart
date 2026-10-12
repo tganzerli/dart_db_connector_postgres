@@ -9,7 +9,7 @@
 /// COMMIT round-trip is negligible.
 ///
 /// Run (with Postgres up at localhost:5432, dbname=teste):
-///   cd dart && dart run example/01_simple_query.dart
+///   dart run example/01_simple_query.dart
 library;
 
 import 'package:dart_db_connector_postgres/dart_db_connector_postgres.dart';

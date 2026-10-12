@@ -49,7 +49,11 @@ PostgresType postgresTypeFromOid(int oid) => switch (oid) {
       PostgresOid.float4 => PostgresType.real,
       PostgresOid.float8 => PostgresType.double_,
       PostgresOid.numeric => PostgresType.numeric,
-      PostgresOid.text || PostgresOid.varchar || PostgresOid.bpchar =>
+      PostgresOid.text ||
+      PostgresOid.varchar ||
+      PostgresOid.bpchar ||
+      PostgresOid.name ||
+      PostgresOid.char =>
         PostgresType.text,
       PostgresOid.json => PostgresType.json,
       PostgresOid.jsonb => PostgresType.jsonb,

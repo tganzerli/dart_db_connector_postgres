@@ -22,7 +22,7 @@ dependencies:
   dart_db_connector_postgres:
     git:
       url: https://github.com/tganzerli/dart_db_connector_postgres
-      ref: v0.1.0
+      ref: v0.1.1
 ```
 
 ### Native library
@@ -121,9 +121,75 @@ per isolate.
   decoders for the common types, including `numeric` as `PostgresNumeric`.
 - **TLS:** any libpq TLS parameter in the connection string, or **`PostgresConnInfo`** with **`SslMode`** as an
   explicit choice (no default). Tested with `verify-full` and client certificates; a handshake failure reaches
-  `NativePoolStartupException` with libpq's reason, and the password is masked in every exception.
+  `NativePoolStartupException` with libpq's reason, and the password is masked in every exception. See
+  [Local PostgreSQL with TLS](#local-postgresql-with-tls).
 
 Not included yet: `LISTEN`/`NOTIFY` delivery, streaming replication, multi-host failover, Windows.
+
+## Local PostgreSQL with TLS
+
+The connector speaks standard PostgreSQL TLS, so any server with `ssl=on` works. To develop and test with
+`sslmode=verify-full`, these are the points where a local setup usually goes wrong.
+
+**The host name must be in the server certificate.** `verify-full` checks the `host` of the connection against the
+certificate's subjectAltName. With Docker Compose, a client in another container connects by the service name and a
+client on the host by `localhost`, so the SAN needs both:
+
+```bash
+printf 'subjectAltName=DNS:postgres,DNS:localhost,IP:127.0.0.1\n' > server.ext
+openssl x509 -req -in server.csr -CA ca.crt -CAkey ca.key -CAcreateserial -days 365 \
+  -extfile server.ext -out server.crt
+```
+
+**The server key needs owner `postgres` and mode `0600`.** The server refuses any other, and a bind mount keeps the
+owner from the host. Mount the files read-only elsewhere and copy them in the container's entrypoint:
+
+```sh
+#!/bin/sh
+set -eu
+mkdir -p /etc/pgtls
+cp /tls-src/ca.crt /tls-src/server.crt /tls-src/server.key /tls-src/pg_hba.conf /etc/pgtls/
+chown -R postgres:postgres /etc/pgtls
+chmod 0600 /etc/pgtls/server.key
+exec docker-entrypoint.sh postgres -c ssl=on \
+  -c ssl_cert_file=/etc/pgtls/server.crt -c ssl_key_file=/etc/pgtls/server.key \
+  -c ssl_ca_file=/etc/pgtls/ca.crt -c hba_file=/etc/pgtls/pg_hba.conf
+```
+
+**Refuse plain connections** in `pg_hba.conf`, so a misconfigured client fails instead of silently connecting
+without TLS:
+
+```
+local    all  all        trust
+hostssl  all  all  all   scram-sha-256
+host     all  all  all   reject
+```
+
+**Client certificates are per role.** With `clientcert=verify-full` on a `hostssl` line, the server compares the
+certificate's CN with the user name: each role that connects needs its own certificate.
+
+**The client key must be private.** libpq refuses an `sslkey` that group or others can read; `chmod 0600` it.
+
+**CI.** On GitHub Actions, service containers start before the job's steps, so certificates generated in a step
+never reach them. Generate them in one step, start PostgreSQL with `docker run` in the next, and wait for it. Do not
+bake a private key into an image.
+
+Connecting:
+
+```dart
+final pool = PostgresConnectionPool(PoolConfig(
+  connInfo: PostgresConnInfo(
+    host: 'postgres', // must match the certificate's SAN
+    port: 5432,
+    database: 'app',
+    user: 'app',
+    password: 'secret',
+    sslMode: SslMode.verifyFull,
+    sslRootCert: 'certs/ca.crt',
+  ).build(),
+  maxSize: 4,
+));
+```
 
 ## Examples
 
