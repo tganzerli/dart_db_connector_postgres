@@ -16,7 +16,7 @@
 ///
 /// PostgreSQL surface (stable unless marked):
 ///   - Connection pool: [PostgresConnectionPool], [PooledConnection],
-///     [PoolConfig], [PoolExhaustedException].
+///     [PoolConfig], [PoolExhaustedException], [PoolAcquireStats].
 ///   - Result decoding: [PostgresResultSet], [PostgresResultRow], [PostgresType],
 ///     [PostgresOid].
 ///   - Parameter binding (ABI MINOR 1): [Param], [SqlStmt].
@@ -54,6 +54,7 @@ library;
 export 'src/config/postgres_conninfo.dart' show PostgresConnInfo, SslMode;
 export 'src/pool/postgres_connection_pool.dart'
     show
+        PoolAcquireStats,
         PoolConfig,
         PoolExhaustedException,
         PooledConnection,

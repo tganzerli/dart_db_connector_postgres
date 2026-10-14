@@ -4,6 +4,23 @@ Format: [Keep a Changelog](https://keepachangelog.com/). The package follows sem
 (`libnative_db`) carries its own ABI version, `MAJOR.MINOR`, checked at load time: a different MAJOR is fatal, an
 older MINOR than the Dart side expects is a warning.
 
+## 0.1.2
+
+Consumed by `git` reference to the tag `v0.1.2`. Native ABI `2.6`, same native library as `0.1.0`.
+
+### Added
+
+- `PostgresConnectionPool.takeAcquireStats()` returns a `PoolAcquireStats` with what `acquire()` saw since the
+  previous call (connections handed out, total and maximum wait in microseconds, largest waiter queue on arrival,
+  and `acquire()` calls that hit `acquireTimeout`) and resets it. It covers every path that borrows a connection,
+  `withTransaction` and `PostgresUnitOfWork` included. Counted only with `PoolConfig.instrumentationEnabled`;
+  otherwise all zero. Per pool, so per isolate. A timed-out call counts only in `timeouts`.
+
+### Tests
+
+- `tls_integration_test.dart` reads the certificates only from `TLS_PG_CERTS`; it no longer defaults to a
+  directory outside the package, and its skip message says what the directory must contain.
+
 ## 0.1.1
 
 Consumed by `git` reference to the tag `v0.1.1`. Native ABI `2.6`, same native library as `0.1.0`.

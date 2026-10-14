@@ -22,7 +22,7 @@ dependencies:
   dart_db_connector_postgres:
     git:
       url: https://github.com/tganzerli/dart_db_connector_postgres
-      ref: v0.1.1
+      ref: v0.1.2
 ```
 
 ### Native library
@@ -104,6 +104,24 @@ per isolate.
 
 - **`PostgresConnectionPool`** and **`PoolConfig`**: the native pool, with an acquire timeout, optional
   instrumentation (`acquireWaitUs`, `queueDepthAtAcquire`) and a graceful `close()`.
+- **Pool contention for periodic metrics.** With `PoolConfig.instrumentationEnabled`, the pool also accumulates
+  what `acquire()` saw, on every path that borrows a connection (`withTransaction` and `PostgresUnitOfWork`
+  included). `takeAcquireStats()` returns it as a `PoolAcquireStats` and resets it in the same step: connections
+  handed out, total and maximum wait in microseconds, largest waiter queue on arrival, and `acquire()` calls that
+  hit `acquireTimeout`. The values are per pool, so per isolate; summing across isolates is up to the caller.
+  With instrumentation off the read is all zero.
+
+  ```dart
+  // every interval, in each isolate that owns a pool:
+  final s = pool.takeAcquireStats();
+  log('db.pool', {
+    'acquires': s.acquires,
+    'waitMeanUs': s.waitMeanUs,
+    'waitMaxUs': s.waitMaxUs,
+    'queueDepthMax': s.queueDepthMax,
+    'timeouts': s.timeouts,
+  });
+  ```
 - **Session reset on release.** `PoolConfig.sessionResetQuery` (default `DISCARD ALL`) runs when a connection
   goes back to the pool, so session state set by one borrower (`SET`, `set_config(..., false)`, `search_path`,
   temporary tables, `LISTEN`, session advisory locks) never reaches the next. A connection returned inside a

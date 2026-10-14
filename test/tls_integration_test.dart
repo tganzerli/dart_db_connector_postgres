@@ -1,10 +1,11 @@
-/// TLS through the connector, against docker/postgres-tls (CA of its own, a
-/// pg_hba that requires TLS for everyone and a verified client certificate
-/// for `postgres`). Skips when the native lib, the certificates
-/// (`docker/postgres-tls/gen-certs.sh`) or the server are missing.
+/// TLS through the connector, against a server that requires TLS from every
+/// client, signs with a CA of its own, authenticates `postgres` by a client
+/// certificate and `tls_nocert` by password only. Skips when the native lib,
+/// the certificates or the server are missing.
 ///
-/// Env: TLS_PG_PORT (default 5434), TLS_PG_CERTS (default
-/// ../../docker/postgres-tls/certs, relative to the package directory).
+/// Env: TLS_PG_PORT (default 5434); TLS_PG_CERTS, a directory with ca.crt,
+/// client.crt, client.key (CN=postgres) and other-ca.crt (an unrelated CA).
+/// Setting up such a server: README, "Local PostgreSQL with TLS".
 library;
 
 import 'dart:async';
@@ -21,8 +22,7 @@ import 'package:dart_db_connector_postgres/src/postgres/postgres_query_executor.
 import 'package:test/test.dart';
 
 final _port = Platform.environment['TLS_PG_PORT'] ?? '5434';
-final _certs = Platform.environment['TLS_PG_CERTS'] ??
-    '${Directory.current.path}/../../docker/postgres-tls/certs';
+final _certs = Platform.environment['TLS_PG_CERTS'];
 
 String _conn({
   String user = 'postgres',
@@ -54,9 +54,11 @@ void main() {
     });
     return;
   }
-  if (!File('$_certs/ca.crt').existsSync()) {
+  if (_certs == null || !File('$_certs/ca.crt').existsSync()) {
     test('skipped (no TLS certificates)', () {
-      markTestSkipped('run docker/postgres-tls/gen-certs.sh and compose up');
+      markTestSkipped('set TLS_PG_CERTS to a directory with ca.crt, '
+          'client.crt, client.key and other-ca.crt; see the README, '
+          '"Local PostgreSQL with TLS"');
     });
     return;
   }

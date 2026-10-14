@@ -84,7 +84,10 @@ class PoolConfig {
 
   /// When true, [PostgresConnectionPool.acquire] times the wait and
   /// records queue depth, so downstream diagnostics
-  /// (`pool-diagnostics-instrumentation`) can detect contention.
+  /// (`pool-diagnostics-instrumentation`) can detect contention. Each
+  /// borrow carries its own values ([PooledConnection.acquireWaitUs],
+  /// [PooledConnection.queueDepthAtAcquire]), and the pool accumulates
+  /// them for [PostgresConnectionPool.takeAcquireStats].
   /// Overhead is ≤2% TPS.
   final bool instrumentationEnabled;
 
@@ -152,6 +155,48 @@ class PoolExhaustedException implements Exception {
   @override
   String toString() =>
       'PoolExhaustedException: no connection available within $timeout';
+}
+
+/// Contention seen by [PostgresConnectionPool.acquire] since the previous
+/// [PostgresConnectionPool.takeAcquireStats] call.
+///
+/// Counted per pool, and a pool lives in one isolate, so these are per
+/// isolate: summing across isolates is up to the caller. All zero when
+/// [PoolConfig.instrumentationEnabled] is false.
+class PoolAcquireStats {
+  /// Connections handed out by `acquire()`.
+  final int acquires;
+
+  /// Sum of the time each of the [acquires] waited, in microseconds.
+  final int waitTotalUs;
+
+  /// Longest of those waits, in microseconds.
+  final int waitMaxUs;
+
+  /// Largest waiter queue found on arrival by an `acquire()` that got a
+  /// connection (0 on the fast path).
+  final int queueDepthMax;
+
+  /// `acquire()` calls that threw [PoolExhaustedException]. They waited
+  /// [PoolConfig.acquireTimeout]; they are not part of [acquires],
+  /// [waitTotalUs], [waitMaxUs] or [queueDepthMax].
+  final int timeouts;
+
+  const PoolAcquireStats({
+    this.acquires = 0,
+    this.waitTotalUs = 0,
+    this.waitMaxUs = 0,
+    this.queueDepthMax = 0,
+    this.timeouts = 0,
+  });
+
+  /// Mean wait in microseconds, or 0 when nothing was acquired.
+  double get waitMeanUs => acquires == 0 ? 0 : waitTotalUs / acquires;
+
+  @override
+  String toString() => 'PoolAcquireStats(acquires: $acquires, '
+      'waitTotalUs: $waitTotalUs, waitMaxUs: $waitMaxUs, '
+      'queueDepthMax: $queueDepthMax, timeouts: $timeouts)';
 }
 
 /// A borrowed connection from a [PostgresConnectionPool].
@@ -251,6 +296,14 @@ class PostgresConnectionPool {
   /// Completes once `pool_destroy` has run (set by [close]).
   Completer<void>? _drained;
 
+  // Read and cleared by takeAcquireStats(); only touched when
+  // config.instrumentationEnabled is true.
+  int _statAcquires = 0;
+  int _statWaitTotalUs = 0;
+  int _statWaitMaxUs = 0;
+  int _statQueueDepthMax = 0;
+  int _statTimeouts = 0;
+
   /// Default constructor — resolves the FFI binding internally from
   /// the per-isolate `SharedBinding` singleton. This is the only
   /// constructor consumers of the public API should use.
@@ -283,6 +336,27 @@ class PostgresConnectionPool {
   int get pending => _waiters.length;
 
   bool get isClosed => _closed;
+
+  /// Returns the contention [acquire] saw since the previous call and resets
+  /// it. Reading and resetting are one synchronous step, so no `acquire()`
+  /// falls between them. Also works after [close], for a last read.
+  ///
+  /// All zero unless [PoolConfig.instrumentationEnabled] is true.
+  PoolAcquireStats takeAcquireStats() {
+    final stats = PoolAcquireStats(
+      acquires: _statAcquires,
+      waitTotalUs: _statWaitTotalUs,
+      waitMaxUs: _statWaitMaxUs,
+      queueDepthMax: _statQueueDepthMax,
+      timeouts: _statTimeouts,
+    );
+    _statAcquires = 0;
+    _statWaitTotalUs = 0;
+    _statWaitMaxUs = 0;
+    _statQueueDepthMax = 0;
+    _statTimeouts = 0;
+    return stats;
+  }
 
   /// Underlying native pool. Exposed for tests and the FFI test
   /// harness; do not retain across [close].
@@ -335,6 +409,7 @@ class PostgresConnectionPool {
       final timer = Timer(config.acquireTimeout, () {
         if (!completer.isCompleted) {
           _waiters.remove(completer);
+          if (instrumented) _statTimeouts++;
           completer
               .completeError(PoolExhaustedException(config.acquireTimeout));
         }
@@ -363,6 +438,13 @@ class PostgresConnectionPool {
           'maxSize=${config.maxSize}): $e');
     }
     stopwatch?.stop();
+    if (instrumented) {
+      final waitUs = stopwatch!.elapsedMicroseconds;
+      _statAcquires++;
+      _statWaitTotalUs += waitUs;
+      if (waitUs > _statWaitMaxUs) _statWaitMaxUs = waitUs;
+      if (initialDepth! > _statQueueDepthMax) _statQueueDepthMax = initialDepth;
+    }
     return PooledConnection._(
       conn,
       this,

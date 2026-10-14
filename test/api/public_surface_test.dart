@@ -1,7 +1,7 @@
 /// Smoke test for the public API surface.
 ///
 /// Imports ONLY the package barrel, NOT any `src/` path. Confirms that
-/// each of the 24 symbols catalogued for the public API
+/// each of the 25 symbols catalogued for the public API
 /// resolves at
 /// compile time and that the 4 removed cross-isolate message types
 /// (`QueryError`/`QueryRequest`/`QueryResult`/`WorkerResponse`) are NOT
@@ -18,8 +18,9 @@ import 'package:dart_db_connector_postgres/dart_db_connector_postgres.dart';
 import 'package:test/test.dart';
 
 void main() {
-  test('barrel exposes 24 stable/deprecated/experimental symbols', () {
-    // Pool primitives (4)
+  test('barrel exposes 25 stable/deprecated/experimental symbols', () {
+    // Pool primitives (5)
+    expect(PoolAcquireStats, isA<Type>());
     expect(PoolConfig, isA<Type>());
     expect(PoolExhaustedException, isA<Type>());
     expect(PooledConnection, isA<Type>());
