@@ -75,6 +75,19 @@ abstract final class PostgresOid {
   /// `timestamptz` (with time zone)
   static const int timestamptz = 1184;
 
+  /// `tsvector` (full-text search document). Text: `'lexeme':1A,2`;
+  /// binary: lexeme count, NUL-terminated lexemes, uint16 positions.
+  /// Decoded as the text form in both formats.
+  static const int tsvector = 3614;
+
+  /// `tsquery` (full-text search query). Binary is the operator tree in
+  /// prefix order; decoded as the text form in both formats.
+  static const int tsquery = 3615;
+
+  /// `regconfig` (text search configuration). Text: the configuration name;
+  /// binary: its OID, decoded as a decimal `String`.
+  static const int regconfig = 3734;
+
   /// `jsonb`
   static const int jsonb = 3802;
 

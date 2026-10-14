@@ -53,7 +53,10 @@ PostgresType postgresTypeFromOid(int oid) => switch (oid) {
       PostgresOid.varchar ||
       PostgresOid.bpchar ||
       PostgresOid.name ||
-      PostgresOid.char =>
+      PostgresOid.char ||
+      PostgresOid.tsvector ||
+      PostgresOid.tsquery ||
+      PostgresOid.regconfig =>
         PostgresType.text,
       PostgresOid.json => PostgresType.json,
       PostgresOid.jsonb => PostgresType.jsonb,

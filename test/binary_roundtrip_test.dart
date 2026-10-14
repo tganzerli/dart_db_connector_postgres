@@ -322,4 +322,46 @@ void main() {
       expect(kb, 'r');
     });
   });
+
+  group('text search types decode as String in both formats', () {
+    const tsvectors = [
+      "to_tsvector('simple', 'João da Silva')",
+      "'a:1A,2B,3C,4 b'::tsvector",
+      r"$$'it''s' 'back\\slash'$$::tsvector",
+      "strip(to_tsvector('simple', 'x y'))",
+      "''::tsvector",
+    ];
+    const tsqueries = [
+      "to_tsquery('simple', 'jo:* & sil:*')",
+      "'a & (b | c)'::tsquery",
+      "'!(a & b) | c'::tsquery",
+      "'a <-> b <2> c'::tsquery",
+      "'a <-> (b <-> c)'::tsquery",
+      "'a:*AB & !b:C'::tsquery",
+      r"$$'it''s' & 'back\\slash'$$::tsquery",
+      "''::tsquery",
+    ];
+    for (final e in [...tsvectors, ...tsqueries]) {
+      test(e, () async {
+        final (t, b) = await _bothFormats(pool, e);
+        expect(t, isA<String>());
+        expect(b, t);
+      });
+    }
+
+    test('jo:* & sil:* reads as the server prints it', () async {
+      final (t, b) =
+          await _bothFormats(pool, "to_tsquery('simple', 'jo:* & sil:*')");
+      expect(t, "'jo':* & 'sil':*");
+      expect(b, t);
+    });
+
+    test('regconfig: name in text, decimal OID in binary', () async {
+      final (t, b) = await _bothFormats(pool, "'simple'::regconfig");
+      final (oid, _) =
+          await _bothFormats(pool, "'simple'::regconfig::oid::text");
+      expect(t, 'simple');
+      expect(b, oid);
+    });
+  });
 }

@@ -4,6 +4,25 @@ Format: [Keep a Changelog](https://keepachangelog.com/). The package follows sem
 (`libnative_db`) carries its own ABI version, `MAJOR.MINOR`, checked at load time: a different MAJOR is fatal, an
 older MINOR than the Dart side expects is a warning.
 
+## 0.1.3
+
+Consumed by `git` reference to the tag `v0.1.3`. Native ABI `2.6`, same native library as `0.1.0`.
+
+### Added
+
+- Full-text search types decode as `String`: `tsvector` (OID 3614), `tsquery` (3615) and `regconfig` (3734), and
+  `typeOf` reports `PostgresType.text`. Text results return the server's text form; binary results rebuild the same
+  text from the binary structure, so both formats agree (`'a':1A 'b'`, `'jo':* & 'sil':*`). The exception is
+  `regconfig` in binary results, which carries only the configuration OID and decodes to it as a decimal `String`
+  (`'3748'` for `simple`); text results return the name. `PostgresOid` gains `tsvector`, `tsquery` and `regconfig`.
+  These columns used to come back as raw bytes (`Uint8List`); a `::text` cast in the query keeps working.
+
+### Tests
+
+- `full_text_search_test.dart`: a generated `tsvector` column with a GIN index, queried with
+  `to_tsquery('simple', $1)` and `Param.text`, ranked with `ts_rank`, through `withTransaction`, in both result
+  formats; the GIN index serves the parameterised predicate.
+
 ## 0.1.2
 
 Consumed by `git` reference to the tag `v0.1.2`. Native ABI `2.6`, same native library as `0.1.0`.

@@ -22,7 +22,7 @@ dependencies:
   dart_db_connector_postgres:
     git:
       url: https://github.com/tganzerli/dart_db_connector_postgres
-      ref: v0.1.2
+      ref: v0.1.3
 ```
 
 ### Native library

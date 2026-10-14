@@ -16,6 +16,7 @@ import 'dart:typed_data';
 
 import 'postgres_numeric.dart';
 import 'postgres_oids.dart';
+import 'postgres_text_search.dart';
 import 'postgres_type.dart';
 
 /// Decoder for a single cell, reading straight from the zero-copy pointer
@@ -41,7 +42,8 @@ const int _postgresEpochUnixMicros = 946684800 * 1000000;
 ///   - `int` for OIDs int2/int4/int8
 ///   - `double` for OIDs float4/float8
 ///   - [PostgresNumeric] for numeric — exact; `getDouble` converts
-///   - `String` for OIDs text/varchar/bpchar/name/"char"
+///   - `String` for OIDs text/varchar/bpchar/name/"char" and the text
+///     search types tsvector/tsquery/regconfig (the server's text form)
 ///   - `dynamic` (Map/List/etc) for json/jsonb (via [jsonDecode])
 ///   - `Uint8List` for bytea (decoded from `\x<hex>` text format) and
 ///     for unknown OIDs (returned as-is)
@@ -64,7 +66,10 @@ Object decodeByOid(Uint8List bytes, int oid) {
     PostgresOid.text ||
     PostgresOid.varchar ||
     PostgresOid.bpchar ||
-    PostgresOid.name =>
+    PostgresOid.name ||
+    PostgresOid.tsvector ||
+    PostgresOid.tsquery ||
+    PostgresOid.regconfig =>
       utf8.decode(bytes),
     // `"char"` text output is ASCII on PostgreSQL 15+: `charout` renders
     // bytes with the high bit set as `\ooo`. Older servers send the raw
@@ -113,7 +118,10 @@ CellDecoder textDecoderForOid(int oid) => switch (oid) {
       PostgresOid.text ||
       PostgresOid.varchar ||
       PostgresOid.bpchar ||
-      PostgresOid.name =>
+      PostgresOid.name ||
+      PostgresOid.tsvector ||
+      PostgresOid.tsquery ||
+      PostgresOid.regconfig =>
         _decodeUtf8Ptr,
       // Cold OIDs (json/jsonb/bytea/timestamp/unknown): delegate to the
       // canonical text family — same semantics, resolved once per plan.
@@ -181,7 +189,8 @@ Object _decodeDoubleTextPtr(ffi.Pointer<ffi.Uint8> ptr, int len) =>
 Object _decodeNumericTextPtr(ffi.Pointer<ffi.Uint8> ptr, int len) =>
     PostgresNumeric.fromText(String.fromCharCodes(ptr.asTypedList(len)));
 
-/// Text-mode UTF-8 string (text/varchar/bpchar/name). The zero-copy view is
+/// Text-mode UTF-8 string (text/varchar/bpchar/name, and the text search
+/// types, whose text output is already the final form). The zero-copy view is
 /// the cheapest way to feed the UTF-8 decoder, which must allocate the
 /// resulting `String` regardless.
 Object _decodeUtf8Ptr(ffi.Pointer<ffi.Uint8> ptr, int len) =>
@@ -243,6 +252,12 @@ PostgresType decodedTypeForOid(int oid) => postgresTypeFromOid(oid);
 ///     formats disagreed on the Dart type for the same column.
 ///   - `"char"` (OID 18): one raw byte, rendered the way `charout`
 ///     renders it in text mode (see [_charFromByte]).
+///   - `tsvector` / `tsquery` (OIDs 3614 / 3615): the binary structure is
+///     rendered the way `tsvectorout` / `tsqueryout` render it in text mode
+///     (see `postgres_text_search.dart`), so both formats yield the same
+///     `String`.
+///   - `regconfig` (OID 3734): the binary form is only the configuration
+///     OID, returned as a decimal `String` (text mode returns the name).
 ///   - Unknown OIDs: returned as raw [Uint8List] (zero-copy view).
 Object decodeByOidBinary(Uint8List bytes, int oid) {
   return switch (oid) {
@@ -258,6 +273,12 @@ Object decodeByOidBinary(Uint8List bytes, int oid) {
     PostgresOid.name =>
       utf8.decode(bytes),
     PostgresOid.char => _charFromByte(bytes),
+    PostgresOid.tsvector => tsvectorFromBinary(bytes),
+    PostgresOid.tsquery => tsqueryFromBinary(bytes),
+    // The binary form is only the OID; the name needs a catalog lookup the
+    // decoder cannot do. Decimal is also valid `regconfig` input.
+    PostgresOid.regconfig =>
+      ByteData.sublistView(bytes).getUint32(0, Endian.big).toString(),
     PostgresOid.json => jsonDecode(utf8.decode(bytes)) as Object,
     PostgresOid.jsonb =>
       // 1-byte version prefix (always 0x01 today) followed by UTF-8 JSON.

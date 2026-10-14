@@ -6,6 +6,7 @@
 /// a live server is covered by the integration tests.
 library;
 
+import 'dart:convert' show utf8;
 import 'dart:typed_data';
 
 import 'package:dart_db_connector_postgres/src/decoder/postgres_decoder.dart';
@@ -410,6 +411,120 @@ void main() {
     test('decoder rejects a payload that is not 16 bytes', () {
       expect(() => decodeByOidBinary(Uint8List(15), PostgresOid.uuid),
           throwsFormatException);
+    });
+  });
+
+  group('decodeByOidBinary — text search', () {
+    // Wire builders mirroring tsvectorsend / tsquerysend.
+    List<int> i32(int v) => [v >> 24 & 0xFF, v >> 16 & 0xFF, v >> 8 & 0xFF, v & 0xFF];
+    List<int> u16(int v) => [v >> 8 & 0xFF, v & 0xFF];
+    List<int> cstr(String s) => [...utf8.encode(s), 0];
+    // WordEntryPos: weight 3=A 2=B 1=C 0=D in the 2 high bits.
+    int wep(int pos, int weight) => weight << 14 | pos;
+    List<int> lexeme(String s, List<int> positions) =>
+        [...cstr(s), ...u16(positions.length), for (final p in positions) ...u16(p)];
+    String vec(List<List<int>> lexemes) => decodeByOidBinary(
+        Uint8List.fromList([...i32(lexemes.length), for (final l in lexemes) ...l]),
+        PostgresOid.tsvector) as String;
+    List<int> val(String s, {int weight = 0, bool prefix = false}) =>
+        [1, weight, prefix ? 1 : 0, ...cstr(s)];
+    List<int> op(int o) => [2, o];
+    List<int> phrase(int distance) => [2, 4, ...u16(distance)];
+    const not = 1, and = 2, or = 3;
+    String query(List<List<int>> items) => decodeByOidBinary(
+        Uint8List.fromList([...i32(items.length), for (final i in items) ...i]),
+        PostgresOid.tsquery) as String;
+
+    test('tsvector: positions, weights, no positions, escapes, UTF-8', () {
+      expect(
+          vec([
+            lexeme('a', [wep(1, 3), wep(2, 2), wep(3, 1), wep(4, 0)]),
+            lexeme('b', []),
+          ]),
+          "'a':1A,2B,3C,4 'b'");
+      expect(vec([lexeme("it's", []), lexeme(r'back\slash', [wep(7, 0)])]),
+          r"'it''s' 'back\\slash':7");
+      expect(vec([lexeme('joão', [wep(1, 0)])]), "'joão':1");
+      expect(vec([]), '');
+    });
+
+    test('tsquery: operand with prefix and weights', () {
+      expect(query([val('a', weight: 8 | 4, prefix: true)]), "'a':*AB");
+      expect(query([val('d', weight: 1)]), "'d':D");
+      expect(query([val("o'k")]), "'o''k'");
+      expect(query([]), '');
+    });
+
+    test('tsquery: binary operators read right operand first', () {
+      // 'a' & 'b' is sent as AND, 'b', 'a'.
+      expect(query([op(and), val('b'), val('a')]), "'a' & 'b'");
+      expect(query([op(or), val('b'), val('a')]), "'a' | 'b'");
+    });
+
+    test('tsquery: parentheses follow operator priority', () {
+      // ('a' | 'b') & 'c'  →  AND, 'c', OR, 'b', 'a'
+      expect(query([op(and), val('c'), op(or), val('b'), val('a')]),
+          "( 'a' | 'b' ) & 'c'");
+      // 'a' | 'b' & 'c'  →  OR, AND('b','c'), 'a'
+      expect(query([op(or), op(and), val('c'), val('b'), val('a')]),
+          "'a' | 'b' & 'c'");
+      // !( 'a' & 'b' )  →  NOT, AND, 'b', 'a'
+      expect(query([op(not), op(and), val('b'), val('a')]), "!( 'a' & 'b' )");
+      expect(query([op(not), val('a')]), "!'a'");
+    });
+
+    test('tsquery: phrase distance and phrase on the right of phrase', () {
+      expect(query([phrase(1), val('b'), val('a')]), "'a' <-> 'b'");
+      expect(query([phrase(2), val('b'), val('a')]), "'a' <2> 'b'");
+      // 'a' <-> ( 'b' <-> 'c' ): the right PHRASE keeps its parentheses.
+      expect(query([phrase(1), phrase(1), val('c'), val('b'), val('a')]),
+          "'a' <-> ( 'b' <-> 'c' )");
+      // ( 'a' <-> 'b' ) <-> 'c' prints without them.
+      expect(query([phrase(1), val('c'), phrase(1), val('b'), val('a')]),
+          "'a' <-> 'b' <-> 'c'");
+    });
+
+    test('malformed payloads throw FormatException', () {
+      expect(
+          () => decodeByOidBinary(
+              Uint8List.fromList([...i32(1), 0x61]), PostgresOid.tsvector),
+          throwsFormatException);
+      expect(
+          () => decodeByOidBinary(
+              Uint8List.fromList([...i32(2), ...val('a')]), PostgresOid.tsquery),
+          throwsA(anything));
+      expect(
+          () => decodeByOidBinary(
+              Uint8List.fromList([...i32(1), 2, 9, ...val('a')]),
+              PostgresOid.tsquery),
+          throwsFormatException);
+    });
+
+    test('regconfig binary is the OID as a decimal String', () {
+      expect(
+          decodeByOidBinary(
+              Uint8List.fromList([0, 0, 0x0E, 0xA4]), PostgresOid.regconfig),
+          '3748');
+    });
+
+    test('text mode returns the server text for the three types', () {
+      for (final (oid, text) in [
+        (PostgresOid.tsvector, "'a':1A 'b'"),
+        (PostgresOid.tsquery, "'jo':* & 'sil':*"),
+        (PostgresOid.regconfig, 'simple'),
+      ]) {
+        expect(decodeByOid(Uint8List.fromList(utf8.encode(text)), oid), text);
+      }
+    });
+
+    test('the three types report PostgresType.text', () {
+      for (final oid in [
+        PostgresOid.tsvector,
+        PostgresOid.tsquery,
+        PostgresOid.regconfig,
+      ]) {
+        expect(postgresTypeFromOid(oid), PostgresType.text);
+      }
     });
   });
 
